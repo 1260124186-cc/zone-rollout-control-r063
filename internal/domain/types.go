@@ -119,18 +119,52 @@ type Probe struct {
 	PayloadFingerprint string    `json:"payload_fingerprint"`
 }
 
+// ProbeReference pins a single probe that participated in an assessment.
+// References are resolved when the assessment is generated and frozen into
+// the stored result; later reads never follow references to probes that were
+// registered after the assessment existed.
+type ProbeReference struct {
+	ProbeID  string    `json:"probe_id"`
+	LeaseID  string    `json:"lease_id"`
+	NodeID   string    `json:"node_id"`
+	Success  bool      `json:"success"`
+	StoredAt time.Time `json:"stored_at"`
+}
+
+// NodeObservation is the per-node slice of the assessment observation
+// summary. Only nodes that submitted at least one of the assessed probes are
+// listed; nodes that were expected but stayed silent appear in
+// RolloutAssessment.MissingNodeIDs.
+type NodeObservation struct {
+	NodeID             string `json:"node_id"`
+	ProbeCount         int    `json:"probe_count"`
+	SuccessCount       int    `json:"success_count"`
+	FailureCount       int    `json:"failure_count"`
+	MaximumLatencyMS   int    `json:"maximum_latency_ms"`
+	LastObservedSerial uint32 `json:"last_observed_serial"`
+}
+
 type RolloutAssessment struct {
-	ID               string    `json:"id"`
-	PlanID           string    `json:"plan_id"`
-	RevisionID       string    `json:"revision_id"`
-	RequestKey       string    `json:"request_key"`
-	Verdict          Verdict   `json:"verdict"`
-	Reasons          []string  `json:"reasons"`
-	ProbeCount       int       `json:"probe_count"`
-	SuccessCount     int       `json:"success_count"`
-	SuccessRatio     float64   `json:"success_ratio"`
-	MaximumLatencyMS int       `json:"maximum_latency_ms"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID               string   `json:"id"`
+	PlanID           string   `json:"plan_id"`
+	RevisionID       string   `json:"revision_id"`
+	RequestKey       string   `json:"request_key"`
+	Verdict          Verdict  `json:"verdict"`
+	Reasons          []string `json:"reasons"`
+	ProbeCount       int      `json:"probe_count"`
+	SuccessCount     int      `json:"success_count"`
+	SuccessRatio     float64  `json:"success_ratio"`
+	MaximumLatencyMS int      `json:"maximum_latency_ms"`
+	// NodeObservations summarizes observations per node, stably sorted by
+	// node ID, and is frozen at generation time.
+	NodeObservations []NodeObservation `json:"node_observations"`
+	// ProbeReferences pins every successful or failing probe counted by the
+	// assessment, stably sorted by node ID and probe ID.
+	ProbeReferences []ProbeReference `json:"probe_references"`
+	// MissingNodeIDs lists participating nodes that never submitted a probe,
+	// stably sorted by node ID.
+	MissingNodeIDs []string  `json:"missing_node_ids"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type AuditEvent struct {

@@ -80,7 +80,12 @@ Zone Rollout Control 是面向 DNS 运维人员的 Go HTTP 控制面。它把区
 - `verdict`：`consistent` 或 `review_required`。
 - `reasons`：稳定原因代码列表。
 - `probe_count`、`success_count`、`success_ratio`、`maximum_latency_ms`。
+- `node_observations`：按节点稳定排序的观察摘要，每项包含 `node_id`、`probe_count`、`success_count`、`failure_count`、`maximum_latency_ms` 和该节点最近一次探针的 `last_observed_serial`；只有实际提交过探针的节点出现。
+- `probe_references`：判定计入的每个成功或失败探针的引用，按 `node_id`、`probe_id` 稳定排序，含 `probe_id`、`lease_id`、`node_id`、`success` 和 `stored_at`，可从判定结果回到具体探针。
+- `missing_node_ids`：计划内已领取租约但从未提交探针的节点集合，按节点 ID 稳定排序；出现 `node_not_observed` 时据此定位缺失节点。
 - `created_at`。
+
+判定明细在生成时一次性冻结到存储中。后续 `GET .../assessments/latest` 查询和同请求键重放返回完全相同的冻结内容，不会读取判定生成之后登记的新探针。判定生成后若其引用的探针或节点在状态中缺失，查询和重放显式返回 `storage_failure`，不悄悄省略引用。
 
 ## 4. 状态和规则
 
@@ -129,10 +134,12 @@ ready --lease--> leased --report--> ready
 
 - 至少需要一个探针。
 - 成功比例按成功探针数除以全部探针数计算，结果保留 6 位小数。
-- 每个参与节点都必须提交至少一个探针。
+- 每个参与节点（在计划内持有租约的节点）都必须提交至少一个探针。
 - 所有成功探针的 `observed_serial` 必须等于计划最新版本的序列号。
 - 成功比例必须不低于 `minimum_success_ratio`。
 - 最大延迟必须不超过 `maximum_latency_ms`。
+
+判定同时冻结按节点稳定排序的观察摘要、全部计入探针的引用和缺失参与节点集合；总体字段（`probe_count`、`success_count`、`success_ratio`、`maximum_latency_ms`）和原因码保持原有语义不变。
 
 不满足条件时结论为 `review_required`，并返回以下稳定原因代码：
 
@@ -204,13 +211,14 @@ ready --lease--> leased --report--> ready
 步骤：
 
 1. 入口校验计划、请求键和最新区域版本。
-2. 判定服务收集计划探针并按节点分组。
-3. 纯领域计算器生成比例、原因和最终结论。
-4. 存储层写入不可变判定并更新计划摘要。
+2. 判定服务在同一事务快照内收集计划探针并按节点分组，同时收集计划内持有租约的参与节点。
+3. 纯领域计算器生成比例、原因、按节点的观察摘要、探针引用、缺失节点集合和最终结论。
+4. 存储层写入不可变判定（明细随判定冻结）并更新计划摘要。
+5. 后续查询和同键重放返回冻结记录，并校验引用仍可解析；引用缺失显式失败。
 
-成功行为：返回确定性的 `consistent` 或 `review_required`。
+成功行为：返回确定性的 `consistent` 或 `review_required`，内容在重放和最新查询中逐字段一致。
 
-失败行为：缺少区域版本、没有探针、请求键冲突或保存失败不会更新计划摘要。
+失败行为：缺少区域版本、没有探针、请求键冲突、引用无法解析或保存失败不会更新计划摘要。
 
 ## 6. 模块边界
 

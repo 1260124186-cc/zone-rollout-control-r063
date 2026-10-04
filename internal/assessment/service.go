@@ -2,6 +2,7 @@ package assessment
 
 import (
 	"context"
+	"sort"
 
 	"solo-0014-zone-rollout-control/internal/domain"
 	"solo-0014-zone-rollout-control/internal/platform"
@@ -47,6 +48,11 @@ func (s *Service) Evaluate(
 					"assessment_id": existingID,
 				})
 			}
+			// Replay returns the frozen record as-is; references must still
+			// resolve explicitly rather than being silently dropped.
+			if err := domain.VerifyAssessmentReferences(existing, state); err != nil {
+				return err
+			}
 			result = existing
 			return nil
 		}
@@ -61,19 +67,17 @@ func (s *Service) Evaluate(
 				"revision_id": plan.LatestRevisionID,
 			})
 		}
-		probes := make([]domain.Probe, 0)
-		for _, probe := range state.Probes {
-			if probe.PlanID == planID {
-				probes = append(probes, probe)
-			}
-		}
-		if len(probes) == 0 {
+		snapshot := collectSnapshot(state, planID)
+		if len(snapshot.Probes) == 0 {
 			return domain.NewError(domain.CodeNoProbes, "plan has no probes to assess", map[string]any{
 				"plan_id": planID,
 			})
 		}
-		result = domain.BuildAssessment(s.ids.New("asm"), plan, revision, probes, now)
+		result = domain.BuildAssessment(s.ids.New("asm"), plan, revision, snapshot, now)
 		result.RequestKey = input.RequestKey
+		if err := domain.VerifyAssessmentReferences(result, state); err != nil {
+			return err
+		}
 		state.Assessments[result.ID] = result
 		state.AssessmentRequestKeys[requestIndex] = result.ID
 		plan.LatestAssessmentID = result.ID
@@ -104,8 +108,40 @@ func (s *Service) Latest(ctx context.Context, planID string) (domain.RolloutAsse
 				"assessment_id": plan.LatestAssessmentID,
 			})
 		}
+		// Return the frozen detail; a missing reference fails the query
+		// instead of being quietly omitted.
+		if err := domain.VerifyAssessmentReferences(found, state); err != nil {
+			return err
+		}
 		result = found
 		return nil
 	})
 	return result, err
+}
+
+// collectSnapshot gathers the probes and participating nodes that currently
+// exist for a plan. Everything downstream is derived only from this snapshot,
+// so an assessment can never observe probes registered after it was stored.
+func collectSnapshot(state *domain.State, planID string) domain.AssessmentSnapshot {
+	snapshot := domain.AssessmentSnapshot{
+		Probes:               make([]domain.Probe, 0),
+		ParticipatingNodeIDs: make([]string, 0),
+	}
+	participating := make(map[string]struct{})
+	for _, lease := range state.Leases {
+		if lease.PlanID != planID {
+			continue
+		}
+		participating[lease.NodeID] = struct{}{}
+	}
+	for _, probe := range state.Probes {
+		if probe.PlanID == planID {
+			snapshot.Probes = append(snapshot.Probes, probe)
+		}
+	}
+	for nodeID := range participating {
+		snapshot.ParticipatingNodeIDs = append(snapshot.ParticipatingNodeIDs, nodeID)
+	}
+	sort.Strings(snapshot.ParticipatingNodeIDs)
+	return snapshot
 }
