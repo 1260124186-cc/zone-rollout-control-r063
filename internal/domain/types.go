@@ -119,18 +119,42 @@ type Probe struct {
 	PayloadFingerprint string    `json:"payload_fingerprint"`
 }
 
-type RolloutAssessment struct {
-	ID               string    `json:"id"`
-	PlanID           string    `json:"plan_id"`
-	RevisionID       string    `json:"revision_id"`
-	RequestKey       string    `json:"request_key"`
-	Verdict          Verdict   `json:"verdict"`
-	Reasons          []string  `json:"reasons"`
+type ProbeReference struct {
+	ProbeID        string    `json:"probe_id"`
+	LeaseID        string    `json:"lease_id"`
+	NodeID         string    `json:"node_id"`
+	RequestKey     string    `json:"request_key"`
+	Success        bool      `json:"success"`
+	ObservedSerial uint32    `json:"observed_serial"`
+	LatencyMS      int       `json:"latency_ms"`
+	ObservedAt     time.Time `json:"observed_at"`
+}
+
+type NodeObservation struct {
+	NodeID           string    `json:"node_id"`
 	ProbeCount       int       `json:"probe_count"`
 	SuccessCount     int       `json:"success_count"`
-	SuccessRatio     float64   `json:"success_ratio"`
+	FailureCount     int       `json:"failure_count"`
+	ObservedSerials  []uint32  `json:"observed_serials"`
 	MaximumLatencyMS int       `json:"maximum_latency_ms"`
-	CreatedAt        time.Time `json:"created_at"`
+	LastObservedAt   time.Time `json:"last_observed_at"`
+}
+
+type RolloutAssessment struct {
+	ID               string            `json:"id"`
+	PlanID           string            `json:"plan_id"`
+	RevisionID       string            `json:"revision_id"`
+	RequestKey       string            `json:"request_key"`
+	Verdict          Verdict           `json:"verdict"`
+	Reasons          []string          `json:"reasons"`
+	ProbeCount       int               `json:"probe_count"`
+	SuccessCount     int               `json:"success_count"`
+	SuccessRatio     float64           `json:"success_ratio"`
+	MaximumLatencyMS int               `json:"maximum_latency_ms"`
+	NodeObservations []NodeObservation `json:"node_observations"`
+	ProbeReferences  []ProbeReference  `json:"probe_references"`
+	MissingNodeIDs   []string          `json:"missing_node_ids"`
+	CreatedAt        time.Time         `json:"created_at"`
 }
 
 type AuditEvent struct {

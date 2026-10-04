@@ -47,6 +47,11 @@ func (s *Service) Evaluate(
 					"assessment_id": existingID,
 				})
 			}
+			// Same-key replay returns the frozen snapshot, but a dangling
+			// reference is reported instead of being silently dropped.
+			if err := domain.VerifyAssessmentSnapshot(existing, state); err != nil {
+				return err
+			}
 			result = existing
 			return nil
 		}
@@ -62,17 +67,53 @@ func (s *Service) Evaluate(
 			})
 		}
 		probes := make([]domain.Probe, 0)
-		for _, probe := range state.Probes {
-			if probe.PlanID == planID {
-				probes = append(probes, probe)
+		leases := make([]domain.NodeLease, 0)
+		leaseNodeIDs := make(map[string]struct{})
+		for _, lease := range state.Leases {
+			if lease.PlanID != planID {
+				continue
 			}
+			leases = append(leases, lease)
+			leaseNodeIDs[lease.NodeID] = struct{}{}
+		}
+		nodes := make([]domain.ResolverNode, 0, len(leaseNodeIDs))
+		for nodeID := range leaseNodeIDs {
+			node, ok := state.Nodes[nodeID]
+			if !ok {
+				return domain.NewError(domain.CodeStorageFailure, "lease references a missing node", map[string]any{
+					"node_id": nodeID,
+				})
+			}
+			nodes = append(nodes, node)
+		}
+		for _, probe := range state.Probes {
+			if probe.PlanID != planID {
+				continue
+			}
+			if _, ok := leaseNodeIDs[probe.NodeID]; !ok {
+				return domain.NewError(domain.CodeStorageFailure, "probe references a node without a plan lease", map[string]any{
+					"probe_id": probe.ID,
+					"node_id":  probe.NodeID,
+				})
+			}
+			probes = append(probes, probe)
 		}
 		if len(probes) == 0 {
 			return domain.NewError(domain.CodeNoProbes, "plan has no probes to assess", map[string]any{
 				"plan_id": planID,
 			})
 		}
-		result = domain.BuildAssessment(s.ids.New("asm"), plan, revision, probes, now)
+		built, err := domain.BuildAssessment(s.ids.New("asm"), domain.AssessmentSnapshot{
+			Plan:     plan,
+			Revision: revision,
+			Probes:   probes,
+			Leases:   leases,
+			Nodes:    nodes,
+		}, now)
+		if err != nil {
+			return err
+		}
+		result = built
 		result.RequestKey = input.RequestKey
 		state.Assessments[result.ID] = result
 		state.AssessmentRequestKeys[requestIndex] = result.ID
@@ -103,6 +144,11 @@ func (s *Service) Latest(ctx context.Context, planID string) (domain.RolloutAsse
 			return domain.NewError(domain.CodeStorageFailure, "plan references a missing assessment", map[string]any{
 				"assessment_id": plan.LatestAssessmentID,
 			})
+		}
+		// The stored detail snapshot is immutable; only verify that its
+		// references still resolve so missing links surface as failures.
+		if err := domain.VerifyAssessmentSnapshot(found, state); err != nil {
+			return err
 		}
 		result = found
 		return nil

@@ -80,7 +80,12 @@ Zone Rollout Control 是面向 DNS 运维人员的 Go HTTP 控制面。它把区
 - `verdict`：`consistent` 或 `review_required`。
 - `reasons`：稳定原因代码列表。
 - `probe_count`、`success_count`、`success_ratio`、`maximum_latency_ms`。
+- `node_observations`：按节点标识稳定排序的观察摘要；每项包含节点标识、探针总数、成功数、失败数、观察到的序列号集合、最大延迟和最近观察时间。
+- `probe_references`：按探针标识稳定排序的引用列表，成功和失败探针都必须出现；每项包含探针、租约、节点、请求键、成功标志、观察序列号、延迟和观察时间。
+- `missing_node_ids`：已为计划领取租约但判定时没有任何探针的节点标识，按标识稳定排序。
 - `created_at`。
+
+判定明细在判定生成时一次性固化。后续 `latest` 查询和同键重放返回同一内容，不读取判定之后登记的新探针；若固化引用无法解析回现存探针或节点，则返回 `storage_failure` 而不是省略引用。
 
 ## 4. 状态和规则
 
@@ -129,10 +134,12 @@ ready --lease--> leased --report--> ready
 
 - 至少需要一个探针。
 - 成功比例按成功探针数除以全部探针数计算，结果保留 6 位小数。
-- 每个参与节点都必须提交至少一个探针。
+- 每个参与节点（为计划领取过租约的节点，以及计划预期节点数尚未覆盖到的情形）都必须提交至少一个探针；已租约未报告的节点标识进入 `missing_node_ids`。
 - 所有成功探针的 `observed_serial` 必须等于计划最新版本的序列号。
 - 成功比例必须不低于 `minimum_success_ratio`。
 - 最大延迟必须不超过 `maximum_latency_ms`。
+
+判定结果除总体字段外，还固化按节点稳定排序的观察摘要、每条探针（成功或失败）的引用以及缺失节点集合。明细在判定生成时快照化：`latest` 查询和同键重放返回完全相同的内容，不纳入判定之后新登记的探针；固化引用失效时明确返回 `storage_failure`，不悄悄省略。
 
 不满足条件时结论为 `review_required`，并返回以下稳定原因代码：
 
